@@ -11,11 +11,13 @@ Windrose freezes because the GPU (your graphics card) stops answering when the g
 ### Step 1: Download the Scripts
 
 1. Open this link in your browser: **https://github.com/awailly/theowindrose/archive/refs/heads/main.zip**
-2. It downloads a zip file. Open it.
-3. Inside you'll see a folder called `theowindrose-main`. Open it, then open `scripts`.
-4. Select all 3 files inside `scripts` and **copy** them.
-5. Open File Explorer, go to `C:\` and create a folder called `CrashDumps` (right-click → New → Folder)
-6. Paste the 3 files into `C:\CrashDumps`
+2. A file called `theowindrose-main.zip` downloads. Find it in your Downloads folder.
+3. **Right-click** the zip file → click **"Extract All..."** → click **"Extract"**
+4. A folder opens. Go into `theowindrose-main` → then into `scripts`
+5. You should see 3 files. Select all of them (**Ctrl+A**) and **copy** them (**Ctrl+C**)
+6. Now open a new File Explorer window. Click the address bar at the top, type `C:\` and press Enter
+7. **Right-click** in the empty space → **New** → **Folder** → name it `CrashDumps`
+8. Open the `CrashDumps` folder and **paste** the 3 files (**Ctrl+V**)
 
 ### Step 2: Open PowerShell as Admin
 
@@ -117,10 +119,6 @@ Then Dad can SSH in:
 ```bash
 ssh theo@<theos-ip>
 ```
-
-### Copy Scripts to C:\CrashDumps
-
-Copy all files from the `scripts/` folder to `C:\CrashDumps\` on your PC.
 
 ---
 
