@@ -19,9 +19,12 @@ Windrose freezes because the GPU (your graphics card) stops answering when the g
 
 ### Step 2: Open PowerShell as Admin
 
-1. Right-click the **Start button** (Windows icon, bottom left)
-2. Click **"Terminal (Admin)"** or **"Windows PowerShell (Admin)"**
-3. Click **Yes** when it asks permission
+1. Click the **Start button** (Windows icon, bottom left)
+2. Type **powershell**
+3. You'll see "Windows PowerShell" appear in the results
+4. **Right-click** on it and click **"Run as administrator"**
+5. Click **Yes** when it asks permission
+6. You should see a blue window with white text
 
 ### Step 3: Allow Scripts to Run
 
