@@ -8,35 +8,42 @@ Windrose freezes because the GPU (your graphics card) stops answering when the g
 
 ## 🚀 Quick Start (Do These Steps In Order)
 
-### Step 1: Open PowerShell as Admin
+### Step 1: Download the Scripts
+
+1. Open this link in your browser: **https://github.com/awailly/theowindrose/archive/refs/heads/main.zip**
+2. It downloads a zip file. Open it.
+3. Inside you'll see a folder called `theowindrose-main`. Open it, then open `scripts`.
+4. Select all 3 files inside `scripts` and **copy** them.
+5. Open File Explorer, go to `C:\` and create a folder called `CrashDumps` (right-click → New → Folder)
+6. Paste the 3 files into `C:\CrashDumps`
+
+### Step 2: Open PowerShell as Admin
 
 1. Right-click the **Start button** (Windows icon, bottom left)
 2. Click **"Terminal (Admin)"** or **"Windows PowerShell (Admin)"**
 3. Click **Yes** when it asks permission
 
-### Step 2: Allow Scripts to Run
+### Step 3: Allow Scripts to Run
 
 Paste this and press Enter:
 ```powershell
 Set-ExecutionPolicy Bypass -Scope Process -Force
 ```
 
-### Step 3: Go to the Scripts Folder
+### Step 4: Go to the Scripts Folder
 
 ```powershell
 cd C:\CrashDumps
 ```
 
-(If the folder doesn't exist yet, paste: `New-Item -Path C:\CrashDumps -ItemType Directory -Force`)
-
-### Step 4: Kill Background Junk
+### Step 5: Kill Background Junk
 
 This stops programs that might interfere with the GPU:
 ```powershell
 .\kill-display-hijackers.ps1
 ```
 
-### Step 5: Start the Monitor
+### Step 6: Start the Monitor
 
 ```powershell
 .\windrose-monitor.ps1
@@ -51,8 +58,6 @@ Waiting for requests...
 ```
 
 **Tell Dad the IP address it shows.** Then launch Windrose and play normally.
-
-### Step 6: Play the Game
 
 Just play! When it freezes:
 - **Don't touch anything for 30 seconds** — the monitor auto-captures a dump
