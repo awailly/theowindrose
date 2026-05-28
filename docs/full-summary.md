@@ -2,91 +2,115 @@
 
 ## The Problem
 
-Windrose (UE5 Early Access, Steam) freezes/hangs requiring force-kill. Not a crash with a dialog — a complete hang. Happens reproducibly within ~20 minutes of gameplay.
+Windrose (UE5 Early Access, Steam) freezes/hangs requiring force-kill. Happens reproducibly within 1-5 minutes of gameplay. Two failure modes observed:
+1. **Software deadlock** — game hangs, no TDR event (fence wait without GPU submission)
+2. **GPU TDR** — nvlddmkm fires Event 153, device removed, game dies
 
-## System
+## System (confirmed via live diagnostics 2026-05-27)
 
 - CPU: AMD Ryzen 7 7800X3D
-- GPU: NVIDIA (exact model TBD — diagnostics not yet collected)
-- iGPU: AMD Radeon (now disabled via PowerShell)
-- RAM: Unknown total (was under pressure from 17 Brave processes + Epic + Steam)
-- OS: Windows 11 (Build 26100)
+- GPU: **NVIDIA GeForce RTX 3080 Ti**
+- Driver: **32.0.15.9649 (v569.49)**
+- iGPU: AMD Radeon Graphics (Driver 31.0.24002.92, 0.5GB VRAM) — **still registered as active adapter with drivers loaded**
+- RAM: 32GB (20GB free at idle)
+- OS: Windows 11 Pro 25H2 Build 26200.8457
 - Game: Windrose v5.6.1.0, installed at `C:\Program Files (x86)\Steam\steamapps\common\Windrose`
-- Game has no `Saved` folder — never writes logs
 
-## Root Cause (confirmed via 2 WinDbg dumps)
+## Root Cause Analysis
 
-**D3D12 GPU fence deadlock.** The GPU stops responding to submitted command lists.
+### Two distinct failure modes confirmed:
 
-Chain of events:
-1. UE5 RHIThread submits D3D12 command list via `ID3D12CommandQueue`
-2. RHIThread calls `WaitOnAddress` waiting for GPU fence signal
-3. GPU never signals the fence
-4. RenderThread blocks waiting on RHI
-5. RHISubmissionThread blocks waiting on RenderThread
-6. GameThread blocks in `GetMessageW` (message pump starved — can't submit new frames)
+**Mode 1: Software deadlock (no TDR)**
+- Observed at 17:51:12 on May 27 — game hung 52 seconds after launch
+- No nvlddmkm event at that time
+- Game recovered on its own (or appeared to)
+- Cause: likely race condition in UE5 RHI layer or Streamline interposer
 
-Both dumps have identical `FAILURE_ID_HASH: {3112b5eb-303b-e877-0655-90bdfa336126}`.
+**Mode 2: GPU TDR (nvlddmkm Event 153)**
+- Observed at 17:56 and 18:09 on May 27 — game crashed
+- nvlddmkm 153 fires in clusters of 2-4 events within seconds
+- **CRITICAL: Also fires when game is NOT running** (17:05 cluster, 6 events in 16s, game didn't launch until 17:50)
+- This means the GPU itself is unstable independent of Windrose
 
-## DLLs Loaded in Process (problematic ones)
+### nvlddmkm Event 153 History
 
-| DLL | Who Loads It | Why It Matters |
-|-----|-------------|----------------|
-| `sl_interposer.dll` | Game binary (Streamline SDK bundled) | Hooks D3D12 Present path. Loaded even with DLSS Frame Gen OFF and Reflex OFF. Has its own "sl.log" thread. |
-| `gameoverlayrenderer64.dll` | Steam (injected via CreateRemoteThread) | Hooks `GetMessageW` via `OverlayHookD3D3`. Loaded even with Steam Overlay disabled in settings. |
-| `NvTelemetryAPI64.dll` | NVIDIA driver (nvwgf2umx.dll) | In-process telemetry. Sleeping on condition variable — probably not causal but adds noise. |
-| `nvcuda64.dll` | NVIDIA driver | Multiple threads in wait states. |
+| Date/Time | Events | Game Running? |
+|-----------|--------|---------------|
+| May 23 17:34 | 3 | Unknown |
+| May 23 18:34 | 5 | Yes (dump captured) |
+| May 24 16:32 | 4 | Unknown |
+| May 24 18:06 | 3 | Yes (dump captured) |
+| May 24 19:06 | 3 | Unknown |
+| May 24 19:47 | 3 | Unknown |
+| May 24 19:57 | 3 | Unknown |
+| **May 27 17:05** | **6** | **NO — game started at 17:50** |
+| May 27 17:56 | 4 | Yes — game crashed |
+| May 27 18:09 | 2 | Yes — game crashed |
 
-## What We Tried (all failed to fix)
+### Key Insight
 
-1. ✅ Disabled AMD iGPU (killed atieclxx/atiesrxx, disabled via PowerShell) → still hangs
-2. ✅ Disabled DLSS Frame Generation in game settings → still hangs
-3. ✅ Disabled NVIDIA Reflex in game settings → still hangs, `sl_interposer.dll` still loads
-4. ✅ Disabled Steam Overlay in Steam settings → `gameoverlayrenderer64.dll` still injected and hooking
-5. ✅ Added `-dx12` launch option → game was already DX12, no change
+The GPU is TDR'ing even without the game. This points to:
+1. Hardware instability (thermal, VRAM, power)
+2. Driver conflict from dual-adapter (AMD iGPU still active)
+3. Background process triggering GPU work that causes TDR
 
-## What We Have NOT Yet Tried
+## AMD iGPU Status (still problematic)
 
-1. **Remove Streamline DLLs** from game folder (rename all `sl.*.dll` files) — forces game to run without Streamline hooks
-2. **Rename `gameoverlayrenderer64.dll`** in Steam folder — prevents injection entirely
-3. **Check TDR settings** — if TdrLevel=0, Windows won't reset the GPU, causing infinite hang instead of crash+recovery
-4. **DDU clean NVIDIA driver reinstall** — clears stale multi-adapter state from when AMD iGPU was active
-5. **`-dx11` launch option** — bypasses D3D12 fence mechanism entirely
-6. **GPU kernel trace (ETL)** — captures what the GPU scheduler sees when the fence stops signaling
-7. **Custom D3D12 fence monitor DLL** — hooks `ID3D12CommandQueue::Signal` to log fence submissions and detect stale fences
+Despite being "disabled", the AMD iGPU is still present:
+- Shows as a display adapter in WMI
+- AMD services still running: **AMD Crash Defender Service (Running, Automatic)**, AmdPpkgSvc (Running, Automatic)
+- AMD DLLs still in System32: atieclxx.dll, atiadlxx.dll, atidxx64.dll, atig6txx.dll, etc.
 
-## Key Diagnostic Questions Still Unanswered
+## What We Tried (chronological)
 
-1. What is the exact GPU model and driver version?
-2. Is TDR disabled in registry? (Would explain infinite hang vs crash)
-3. Are there any `nvlddmkm` or `dxgkrnl` events in Event Viewer around hang time?
-4. What Streamline DLLs exist in the game folder? (Need exact paths to rename)
-5. Are AMD driver remnants still installed as services?
+| # | Action | Result |
+|---|--------|--------|
+| 1 | Disabled AMD iGPU via PowerShell | Still hangs — services/drivers still loaded |
+| 2 | Disabled DLSS Frame Generation | Still hangs |
+| 3 | Disabled NVIDIA Reflex | Still hangs, sl_interposer still loads |
+| 4 | Disabled Steam Overlay in settings | DLL still injected |
+| 5 | `-dx12` launch option | No effect (already DX12) |
+| 6 | **Renamed all sl.*.dll** (Streamline removal) | **Still crashes — TDR at 18:09** |
 
-## Tools & Repo Created
+## Streamline DLLs (now renamed to .disabled)
 
-**GitHub repo**: https://github.com/awailly/theowindrose (public)
+Located in two paths under game folder:
+```
+Windrose\R5\Builds\WindowsServer\R5\Plugins\3rdParty\DLSS\Plugins\StreamlineCore\Binaries\ThirdParty\Win64\
+Windrose\R5\Plugins\3rdParty\DLSS\Plugins\StreamlineCore\Binaries\ThirdParty\Win64\
+```
+Files: sl.common.dll, sl.deepdvc.dll, sl.dlss_g.dll, sl.interposer.dll, sl.pcl.dll, sl.reflex.dll
 
-Contains:
-- `scripts/windrose-monitor.ps1` — HTTP server (port 9999) that auto-detects hangs, captures dumps, exposes diagnostics via curl endpoints (`/status`, `/diag`, `/events`, `/log`, `/dump`, `/kill`)
-- `scripts/kill-display-hijackers.ps1` — kills MSI Center, AMD remnants, NVIDIA overlay/telemetry, Discord, RGB software, Epic launcher
-- `scripts/windrose-trace.ps1` — captures GPU kernel ETL traces via xperf/wpr
-- `docs/investigation.md` — technical investigation notes
-- `README.md` — kid-friendly step-by-step instructions (download zip, no git needed)
+## Other Processes Running During Crashes
 
-## Remote Access Setup
+- L-Connect-Service (Lian Li RGB) — 213MB, hooks GPU
+- Discord — 574MB (keeping for communication)
+- NVDisplay.Container — 171MB
+- Multiple Brave tabs, WhatsApp, Steam
 
-- SSH server setup instructions in README (not yet confirmed running)
-- Monitor script exposes HTTP on port 9999 for curl-based remote diagnostics
-- Kid just needs to: download zip → extract → run PowerShell as admin → run monitor → tell dad the IP
+## Infrastructure
 
-## Recommended Next Steps (in priority order)
+- **GitHub repo**: https://github.com/awailly/theowindrose (public)
+- **Monitor**: `http://192.168.1.243:9999/` (endpoints: /status, /diag, /events, /log, /dump, /kill)
+- **SSH**: Server installed, firewall opened, public key auth being set up
+- **Auto-dump**: Watchdog captures dumps on hang (3 captured so far)
 
-1. **Get diagnostics first** — `curl http://<ip>:9999/diag` once monitor is running. This tells us GPU model, driver version, TDR settings, and Streamline DLL paths.
-2. **Rename Streamline DLLs** — `Get-ChildItem -Recurse "C:\Program Files (x86)\Steam\steamapps\common\Windrose" -Filter "sl.*" | Rename-Item -NewName { $_.Name + ".disabled" }` — test if game runs without them.
-3. **Rename Steam overlay DLL** — `Rename-Item "C:\Program Files (x86)\Steam\gameoverlayrenderer64.dll" "gameoverlayrenderer64.dll.disabled"` — test without the GetMessage hook.
-4. **Check/fix TDR** — if TdrLevel is 0 or TdrDelay is very high, reset to defaults so Windows properly resets the GPU instead of hanging forever.
-5. **GPU kernel trace** — if still hanging after removing hooks, capture ETL to see what the GPU scheduler reports.
-6. **DDU + fresh driver** — if trace shows driver-level issue.
-7. **`-dx11`** — nuclear option, bypasses D3D12 entirely.
-8. **Report to game devs** — if it's a game bug (D3D12 fence race condition in their RHI layer).
+## Dumps Captured
+
+| File | Size | When |
+|------|------|------|
+| Windrose-Win64-Shipping.DMP | 19.5GB | May 24 18:15 |
+| windrose_HANG_20260527_175112.dmp | 9.2GB | May 27 17:51 (software deadlock) |
+| windrose_HANG_20260527_180052.dmp | ? | May 27 18:00 |
+| windrose_HANG_20260527_180538.dmp | ? | May 27 18:05 |
+
+## Next Steps (updated priority)
+
+1. **Get full nvlddmkm 153 event message** — need the actual text to see which GPU engine times out
+2. **Properly disable AMD iGPU** — `Disable-PnpDevice` + stop/disable all AMD services + check if it disappears from adapter list
+3. **Kill L-Connect-Service** (Lian Li RGB) — known to cause GPU issues
+4. **GPU stress test outside game** (FurMark/3DMark) — confirm if GPU is stable without Windrose
+5. **GPU kernel trace (ETL)** during hang — see what dxgkrnl reports
+6. **Try `-dx11`** — bypasses D3D12 entirely
+7. **DDU clean install** — if GPU is only unstable with current driver
+8. **Check GPU thermals** — if TDR happens under any GPU load, it's hardware
